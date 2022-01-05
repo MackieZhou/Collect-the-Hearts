@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<head>
+<title>Get The Hearts!!!</title>
+<script src="three.min.js"></script>
+<script src="KeyboardState.js"></script>
+<script src="GLTFLoader.js"></script>
+
+<script>
+    var scene, camera, renderer; // Three.js rendering basics.
+    var canvas; // The canvas on which the image is rendered.
+    var board, pawn;
+    var keyboard = new KeyboardState();
+
+    var pink, yellow, green, blue, purple;
+
+    var moveCount = 0, rotCount = 0, jumpCount = 0;
+    var dx = 0; dz = 0;
+    var moving;
+    var thrust = new THREE.Vector3();
+    var camPosition, camTarget;
+    var targetPos = new THREE.Vector3(), gaze = new THREE.Vector3();
+
+    // robot arms
+    var lUpperArm, lLowerArm, lRotCount = 0;
+    var rUpperArm, rLowerArm, rRotCount = 0;
+
+    var countLoadedModel = 0, collect = 0;
+
+    function createWorld() {
+        renderer.setClearColor(0x6666CC);
+        scene = new THREE.Scene();
+    
+        // create a camera, sitting on the positive z-axis.  The camera is not part of the scene.
+        var fov = 60;
+        var aspect = window.innerWidth/window.innerHeight;
+        var near = 1;
+        var far = 210;
+        camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
+
+        // create directionalLight
+        var sun = new THREE.DirectionalLight( 0xffffff, 0.5 );
+        sun.position.set = (100,300,100);
+        scene.add(sun);
+        var sun2 = new THREE.DirectionalLight( 0xffffff, 0.5 );
+        sun2.position.set = (-100,300,-100);
+        scene.add(sun2);
+
+        // create a dim ambient light
+        scene.add( new THREE.AmbientLight( 0xffffff, 0.5 ) );
+
+        // checkerboard floor - 16 * 16
+        board = new THREE.Object3D();
+        var square;
+        for (let i = 0; i < 16; i++) {
+            for (let j = 0; j < 16; j++) {
+                if ((i+j+8)%2==0) {
+                    square = new THREE.Mesh(new THREE.PlaneGeometry(10,10),new THREE.MeshPhongMaterial({color: 0x9999e6, flatShading: true}));
+                } else {
+                    square = new THREE.Mesh(new THREE.PlaneGeometry(10,10),new THREE.MeshPhongMaterial({color: 0x8585e0, flatShading: true}));
+                }
+                square.rotation.x = -Math.PI/2;
+                square.position.set(i*10-75, -10, j*10-75);
+                board.add(square);
+            }
+        }
+        scene.add(board);
+
+        // create texture map for four boundaries
+        // source: https://3dtextures.me/2021/11/20/sci-fi-wall-012/
+        var texLoader = new THREE.TextureLoader();
+        var boxMaterial = new THREE.MeshPhongMaterial({
+            color: "white",
+            specular: "white",
+            shininess: 2
+        });
+
+        // load texture map
+        map = texLoader.load("base.jpg");
+        map.wrapS = THREE.RepeatWrapping;
+        map.wrapT = THREE.RepeatWrapping;
+        map.repeat.set( 5, 1 );
+        // load bump map
+        bump = texLoader.load("bump.png");
+        bump.wrapS = THREE.RepeatWrapping;
+        bump.wrapT = THREE.RepeatWrapping;
+        bump.repeat.set( 1, 5 );
+
+        // map both texture and bump
+        boxMaterial.map = map;
+        boxMaterial.bumpMap = bump;
+        boxMaterial.bumpScale = 1.2;
+
+        // create the four boundaries
+        var boxGeom = new THREE.BoxGeometry( 2, 6, 164 );
+        var boundary1 = new THREE.Mesh( boxGeom, boxMaterial );
+        boundary1.position.set(-81, -7, 0);
+        scene.add( boundary1 );
+
+        var boundary2 = new THREE.Mesh( boxGeom, boxMaterial );
+        boundary2.position.set(81, -7, 0);
+        scene.add( boundary2 );
+
+        var boundary3 = new THREE.Mesh( boxGeom, boxMaterial );
+        boundary3.rotation.y = Math.PI/2;
+        boundary3.position.set(0, -7, -81);
+        scene.add( boundary3 );
+
+        var boundary4 = new THREE.Mesh( boxGeom, boxMaterial );
+        boundary4.rotation.y = Math.PI/2;
+        boundary4.position.set(0, -7, 81);
+        scene.add( boundary4 );
+
+        // pawn
+        pawn = new THREE.Object3D();
+
+        var top = new THREE.Mesh(new THREE.SphereGeometry(3,20,20),new THREE.MeshPhongMaterial({color: "white"}));
+        pawn.add(top);
+        var bottom = new THREE.Mesh(new THREE.ConeGeometry(3,12,20),new THREE.MeshPhongMaterial({color: "white"}));
+        bottom.position.y = -4;
+        pawn.add(bottom);
+        scene.add(pawn);
+        sun.target = board;
+
+        // left arm
+        lUpperArm = new THREE.Object3D();
+        lLowerArm = new THREE.Object3D();
+        var lUpperCube = new THREE.Mesh(new THREE.BoxGeometry(4,1,1), new THREE.MeshPhongMaterial({color: "white"}));
+        lUpperCube.position.x = -2;
+        var lLowerCube = new THREE.Mesh(new THREE.BoxGeometry(3,1,1), new THREE.MeshPhongMaterial({color: "white"}));
+        lLowerCube.position.x = -1.5;
+
+        scene.add(lUpperArm);
+        scene.add(lLowerArm);
+        scene.add(lUpperCube);
+        scene.add(lLowerCube);
+        lUpperArm.add(lUpperCube);
+        lUpperArm.add(lLowerArm);
+        lUpperArm.rotation.set(0.3, -0.4, 0.2);
+        lLowerArm.add(lLowerCube);
+        lLowerArm.position.x = -2;
+        lLowerArm.rotation.set(0.2, -0.5, 0);
+
+        // right arm
+        rUpperArm = new THREE.Object3D();
+        rLowerArm = new THREE.Object3D();
+        var rUpperCube = new THREE.Mesh(new THREE.BoxGeometry(4,1,1), new THREE.MeshPhongMaterial({color: "white"}));
+        rUpperCube.position.x = 2;
+        var rLowerCube = new THREE.Mesh(new THREE.BoxGeometry(3,1,1), new THREE.MeshPhongMaterial({color: "white"}));
+        rLowerCube.position.x = 1.5;
+
+        scene.add(rUpperArm);
+        scene.add(rLowerArm);
+        scene.add(rUpperCube);
+        scene.add(rLowerCube);
+        rUpperArm.add(rUpperCube);
+        rUpperArm.add(rLowerArm);
+        rUpperArm.rotation.set(0.3, 0.4, -0.2);
+        rLowerArm.add(rLowerCube);
+        rLowerArm.position.x = 2;
+        rLowerArm.rotation.set(0.2, 0.5, 0);
+
+        moving = new THREE.Object3D();
+        moving.position.set(-5,0,65);
+        moving.add(pawn);
+        scene.add(moving);
+        camPosition = new THREE.Object3D();  // position the camera
+        camPosition.position.set(0,16,40);
+        moving.add(camPosition);
+        camTarget = new THREE.Object3D();  // point the camera
+        camTarget.position.set(0,5,10);
+        moving.add(camTarget);
+
+        moving.add(lUpperArm);
+        lUpperArm.position.set(-1.5, -5, 0);
+        lLowerArm.position.set(-4, 0, 0);
+
+        moving.add(rUpperArm);
+        rUpperArm.position.set(1.5, -5, 0);
+        rLowerArm.position.set(4, 0, 0);
+
+        // generate 5 unique random positions for hearts
+        // code is adapted from this stakoverflow post:
+        // https://stackoverflow.com/questions/2380019/generate-unique-random-numbers-between-1-and-100
+        var rand = [];
+        while(rand.length < 10) {
+            var r = Math.floor(Math.random() * 15) * 10 - 75;
+            if(rand.indexOf(r) === -1) rand.push(r);
+        }
+
+        // load five hearts of different colors
+        var loader = new THREE.GLTFLoader();
+        
+        yellow = {collect : false}
+        pink = {collect : false}
+        green = {collect : false}
+        blue = {collect : false}
+        purple = {collect : false}
+        // yellow.collect = false;
+        // pink.collect = false;
+        // green.collect = false;
+        // blue.collect = false;
+        // purple.collect = false;
+
+        loader.load(
+            "yellow.glb",
+            function ( gltf ) {
+                yellow.model = gltf.scene;
+                scene.add( yellow.model );
+                yellow.model.position.set(rand[0], -2.5 , rand[1]);
+                countLoadedModel += 1;
+                if (countLoadedModel == 5) {
+                    requestAnimationFrame( render );
+                }
+            }
+        );
+        loader.load(
+            "pink.glb",
+            function ( gltf ) {
+                pink.model = gltf.scene;
+                scene.add( pink.model );
+                pink.model.position.set(rand[2], -2.5 , rand[3]);
+                countLoadedModel += 1;
+                if (countLoadedModel == 5) {
+                    requestAnimationFrame( render );
+                }
+            }
+        );
+        loader.load(
+            "purple.glb",
+            function ( gltf ) {
+                purple.model = gltf.scene;
+                scene.add( purple.model );
+                purple.model.position.set(rand[4], -2.5 , rand[5]);
+                countLoadedModel += 1;
+                if (countLoadedModel == 5) {
+                    requestAnimationFrame( render );
+                }
+            }
+        );
+        loader.load(
+            "green.glb",
+            function ( gltf ) {
+                green.model = gltf.scene;
+                scene.add( green.model );
+                green.model.position.set(rand[6], -2.5 , rand[7]);
+                countLoadedModel += 1;
+                if (countLoadedModel == 5) {
+                    requestAnimationFrame( render );
+                }
+            }
+        );
+        loader.load(
+            "blue.glb",
+            function ( gltf ) {
+                blue.model = gltf.scene;
+                scene.add( blue.model );
+                blue.model.position.set(rand[8], -2.5 , rand[9]);
+                countLoadedModel += 1;
+                if (countLoadedModel == 5) {
+                    requestAnimationFrame( render );
+                }
+            }
+        );
+    }
+
+    // if the pawn gets close to a heart,
+    // the heart will be collected and goes up
+    function checkClose( heart ) {
+        if (!heart.collect) {
+            var close = true;
+            if (heart.model.position.z - moving.position.z > 5 || heart.model.position.z - moving.position.z < -5 ) {
+                close = false;
+            }
+            if (heart.model.position.x - moving.position.x > 5 || heart.model.position.x - moving.position.x < -5 ) {
+                close = false;
+            }
+            // the heart will move up to y=15 and stop there
+            if (heart.model.position.y > 14) {
+                close = false;
+                heart.collect = true;
+                collect++;
+            }
+            return close;
+        }
+        return false;
+    }
+
+    // Modify the scene to produce the desired animation
+    function updateAnimation() {
+        // always look at the target
+        camPosition.getWorldPosition(camera.position);
+        camera.lookAt(camTarget.getWorldPosition(gaze));
+
+        // scan keyboard
+        keyboard.update();
+
+        const moveSteps = 15;
+
+        targetPos = camTarget.getWorldPosition(targetPos);
+        moving.getWorldPosition(thrust);
+        thrust.sub(targetPos);
+        thrust.divideScalar(moveSteps);
+
+        // we must complete any current move before beginning another
+        if (moveCount > 0) {
+            // take next step in move
+            moveCount--;
+            moving.position.x += dx;
+            moving.position.z += dz;
+            // check if out of boundary
+            if ( moving.position.x < -75 || moving.position.x > 75 || moving.position.z < -75 || moving.position.z > 75 ) {
+                console.log("Out of boundary!");
+                moveCount = -1;
+                moving.position.x -= dx;
+                moving.position.z -= dz;
+            }
+        } else {
+            // move is done, search for next command
+            if ( keyboard.down('W') || keyboard.down("up") ) {
+                moveCount = moveSteps;
+                dx = thrust.x;
+                dz = thrust.z;
+                console.log("Forward");
+            } else if ( keyboard.down('S') || keyboard.down("down") ) {
+                moveCount = moveSteps;
+                dx = -thrust.x;
+                dz = -thrust.z;
+                console.log("Backward");
+            }
+        }
+
+        const rotSteps = 15;
+        const rotIncrement = 0.5 * Math.PI / rotSteps;
+
+        // we must complete any current move before beginning another
+        if (rotCount > 0) {
+            // take next step in move
+            rotCount--;
+            moving.rotation.y += rot;
+        } else {
+            // move is done, search for next command
+            if ( keyboard.down('A') || keyboard.down("left") ) {
+                rot = +rotIncrement;
+                rotCount = rotSteps;
+                console.log("Left");
+            } else if ( keyboard.down('D') || keyboard.down("right") ) {
+                rot = -rotIncrement;
+                rotCount = rotSteps;
+                console.log("Right");
+            }
+        }
+
+        if ( keyboard.down('1') ) {
+            lLowerArm.rotation.x += 0.2;
+            console.log("Rotate left lower arm");
+        } else if ( keyboard.down('2') ) {
+            if (lRotCount % 10 < 5) {
+                lRotCount++;
+                lUpperArm.rotation.z += 0.1;
+            } else {
+                lRotCount++;
+                lUpperArm.rotation.z -= 0.1;
+            }
+            console.log("Rotate left upper arm");
+        } else if ( keyboard.down('3') ) {
+            if (rRotCount % 10 < 5) {
+                rRotCount++;
+                rUpperArm.rotation.z -= 0.1;
+            } else {
+                rRotCount++;
+                rUpperArm.rotation.z += 0.1;
+            }
+            console.log("Rotate right upper arm");
+        } else if ( keyboard.down('4') ) {
+            rLowerArm.rotation.x += 0.2;
+            console.log("Rotate right lower arm");
+        }
+
+
+        yellow.model.rotation.y += 0.02;
+        pink.model.rotation.y += 0.02;
+        purple.model.rotation.y += 0.02;
+        green.model.rotation.y += 0.02;
+        blue.model.rotation.y += 0.02;
+
+        if (checkClose( blue )) {
+            blue.model.position.y += 3;
+        }
+        if (checkClose( green )) {
+            green.model.position.y += 3;
+        }
+        if (checkClose( yellow )) {
+            yellow.model.position.y += 3;
+        }
+        if (checkClose( pink )) {
+            pink.model.position.y += 3;
+        }
+        if (checkClose( purple )) {
+            purple.model.position.y += 3;
+        }
+
+        // print progress
+        if (collect < 5) {
+            document.getElementById("overlay").innerHTML = "&nbsp;You have got " + collect + " out of 5 hearts!";
+        } else {
+            document.getElementById("overlay").innerHTML = "&nbsp;You have got " + collect + " out of 5 hearts! YOU WON!!!";
+        }
+    }
+
+    // Render the scene. This is called for each frame of the animation.
+    function render() {
+        renderer.render(scene, camera);
+        updateAnimation();
+        requestAnimationFrame( render );
+    }
+
+    //----------------------------------------------------------------------------------
+
+    // The init() function is called by the onload event when the document has loaded.
+    function init() {
+        try {
+            renderer = new THREE.WebGLRenderer( {antialias: true} );
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            canvas = renderer.domElement;
+            document.getElementById("canvas-holder").appendChild(canvas);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            }
+        catch (e) {
+            document.getElementById("canvas-holder").innerHTML = "<h3><b>WebGL is not available.</b><h3>";
+            return;
+        }
+    
+        // create world and render scene
+        createWorld();
+    }
+
+</script>
+
+</head>
+<body onload="init()">
+<div id="canvas-holder">
+<!-- Canvas element will be created here, sized to fit the window space -->
+</div>
+<p style="position: absolute; top: 0; z-index:1; color: cyan" id="overlay">
+</p>
+</p>
+</body>
+</html>
